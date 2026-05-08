@@ -9,6 +9,7 @@ dependencies = [
     "pycocotools>=2.0.11",
     "pytorch-lightning>=2.6.1",
     "rfdetr>=1.6.5.post0",
+    "supervision>=0.27.0.post2",
     "tqdm>=4.67.3",
     "ultralytics>=8.4.47",
 ]
