@@ -41,7 +41,7 @@ def parse_args() -> argparse.Namespace:
         default="yolo26n.pt",
         help="Ultralytics pretrained weights or YAML (default: yolo26n.pt)",
     )
-    p.add_argument("--epochs", type=int, default=100)
+    p.add_argument("--epochs", type=int, default=300)
     p.add_argument("--imgsz", type=int, default=640)
     p.add_argument("--batch", type=int, default=16, help="Use -1 for auto batch")
     p.add_argument("--device", type=str, default=None, help="e.g. 0, cpu, 0,1 (default: ultralytics auto)")

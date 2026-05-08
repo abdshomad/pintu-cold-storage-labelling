@@ -2,6 +2,9 @@
 """
 Convert LabelMe JSON annotations (per split folder) to a single COCO JSON per split.
 
+If only train/ exists under data-root (no valid/ or test/), all LabelMe samples in
+train/ are shuffled and partitioned 70% / 20% / 10% into output train/, valid/, test/.
+
 Output layout (Roboflow / common tooling style; default under pintu-cold-storage-datasets/):
   converted_coco_format/
     train/
@@ -17,11 +20,38 @@ from __future__ import annotations
 
 import argparse
 import json
+import random
 import shutil
 import sys
 from pathlib import Path
 
 DATASETS_DIR = Path(__file__).resolve().parent.parent / "pintu-cold-storage-datasets"
+
+# Default split subfolders under --data-root (and mirrored under --out-dir).
+DEFAULT_SPLITS = ("train", "valid", "test")
+
+# When only data-root/train exists, output sizes use integer parts of n (sum to n).
+SPLIT_RATIOS_PCT = (70, 20, 10)
+
+
+def collect_labelme_json_paths(split_dir: Path) -> list[Path]:
+    """Sorted LabelMe JSON paths under split_dir (excludes COCO export)."""
+    out: list[Path] = []
+    for jp in sorted(split_dir.glob("*.json")):
+        if jp.name == "_annotations.coco.json":
+            continue
+        out.append(jp)
+    return out
+
+
+def partition_counts(n: int, ratios_pct: tuple[int, int, int]) -> tuple[int, int, int]:
+    """Return (n_train, n_valid, n_test) summing to n."""
+    r0, r1, r2 = ratios_pct
+    total_r = r0 + r1 + r2
+    n0 = (n * r0) // total_r
+    n1 = (n * r1) // total_r
+    n2 = n - n0 - n1
+    return n0, n1, n2
 
 
 def shape_to_xyxy(shape: dict, img_w: int, img_h: int) -> tuple[float, float, float, float] | None:
@@ -75,7 +105,7 @@ def resolve_source_image(json_path: Path, data: dict) -> Path | None:
 def collect_class_names(split_dirs: list[Path]) -> list[str]:
     names: set[str] = set()
     for d in split_dirs:
-        for jp in sorted(d.glob("*.json")):
+        for jp in collect_labelme_json_paths(d):
             try:
                 raw = json.loads(jp.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError):
@@ -87,8 +117,8 @@ def collect_class_names(split_dirs: list[Path]) -> list[str]:
     return sorted(names)
 
 
-def build_coco_for_split(
-    split_dir: Path,
+def build_coco_from_json_paths(
+    json_paths: list[Path],
     out_split_dir: Path,
     name_to_cat_id: dict[str, int],
 ) -> tuple[int, int, int]:
@@ -103,10 +133,7 @@ def build_coco_for_split(
     ann_id = 1
     skipped = 0
 
-    json_paths = sorted(split_dir.glob("*.json"))
     for jp in json_paths:
-        if jp.name == "_annotations.coco.json":
-            continue
         try:
             data = json.loads(jp.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
@@ -193,6 +220,16 @@ def build_coco_for_split(
     return len(images), len(annotations), skipped
 
 
+def build_coco_for_split(
+    split_dir: Path,
+    out_split_dir: Path,
+    name_to_cat_id: dict[str, int],
+) -> tuple[int, int, int]:
+    """Process every LabelMe JSON in split_dir."""
+    json_paths = collect_labelme_json_paths(split_dir)
+    return build_coco_from_json_paths(json_paths, out_split_dir, name_to_cat_id)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="LabelMe folders (train/valid/test) → COCO format")
     parser.add_argument(
@@ -210,16 +247,72 @@ def main() -> int:
     parser.add_argument(
         "--splits",
         nargs="*",
-        default=["train", "valid", "test"],
-        help="Split folder names to process if they exist under data-root",
+        default=list(DEFAULT_SPLITS),
+        metavar="NAME",
+        help=f"Split folder names under data-root (default: {' '.join(DEFAULT_SPLITS)}). "
+        "Existing folders are processed; missing splits are skipped.",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=42,
+        help="RNG seed when only train/ exists (70/20/10 shuffle split). Ignored otherwise.",
     )
     args = parser.parse_args()
 
     data_root: Path = args.data_root.resolve()
     out_root: Path = args.out_dir.resolve()
 
+    train_dir = data_root / "train"
+    valid_dir = data_root / "valid"
+    test_dir = data_root / "test"
+    only_train_on_disk = train_dir.is_dir() and not valid_dir.is_dir() and not test_dir.is_dir()
+
+    if only_train_on_disk:
+        json_paths = collect_labelme_json_paths(train_dir)
+        if not json_paths:
+            print(f"Error: no LabelMe JSON files under {train_dir}", file=sys.stderr)
+            return 1
+
+        rng = random.Random(args.seed)
+        shuffled = json_paths.copy()
+        rng.shuffle(shuffled)
+        n = len(shuffled)
+        n_tr, n_va, _n_te = partition_counts(n, SPLIT_RATIOS_PCT)
+        i1 = n_tr
+        i2 = i1 + n_va
+        train_paths = shuffled[:i1]
+        valid_paths = shuffled[i1:i2]
+        test_paths = shuffled[i2:]
+
+        class_names = collect_class_names([train_dir])
+        if not class_names:
+            print("Warning: no labels found in JSON files; categories will be empty.", file=sys.stderr)
+        name_to_cat_id = {name: i + 1 for i, name in enumerate(class_names)}
+
+        r0, r1, r2 = SPLIT_RATIOS_PCT
+        print(
+            f"Only train/ found: shuffling {n} samples into train/valid/test "
+            f"({r0}/{r1}/{r2} %, seed={args.seed})",
+        )
+        print(f"Categories ({len(class_names)}): {class_names}")
+        for split_name, paths in (
+            ("train", train_paths),
+            ("valid", valid_paths),
+            ("test", test_paths),
+        ):
+            out_split = out_root / split_name
+            n_img, n_ann, skip = build_coco_from_json_paths(paths, out_split, name_to_cat_id)
+            print(f"{split_name}: images={n_img}, annotations={n_ann}, skipped_json={skip} -> {out_split}")
+
+        print(f"Done. Output root: {out_root}")
+        return 0
+
+    # argparse: `--splits` with no values yields [] and would otherwise process nothing.
+    split_names: list[str] = list(args.splits) if args.splits else list(DEFAULT_SPLITS)
+
     split_dirs: list[Path] = []
-    for name in args.splits:
+    for name in split_names:
         d = data_root / name
         if d.is_dir():
             split_dirs.append(d)

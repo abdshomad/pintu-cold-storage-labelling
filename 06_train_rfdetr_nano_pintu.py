@@ -57,7 +57,7 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Subfolder name under --models-dir (default: auto rf-detr-YYYY-MM-DD-vN)",
     )
-    p.add_argument("--epochs", type=int, default=100)
+    p.add_argument("--epochs", type=int, default=300)
     p.add_argument("--batch-size", type=int, default=4, help="Per-step batch (pair with --grad-accum-steps for effective batch)")
     p.add_argument("--grad-accum-steps", type=int, default=4)
     p.add_argument("--lr", type=float, default=1e-4)
