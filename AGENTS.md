@@ -74,6 +74,7 @@ Scripts in **this directory** follow a **fixed pipeline order** via **two-digit 
 
 - **01** is **Bash**. From this directory: `bash 01_extract_frames.sh`. From the logical repo root (parent of this folder): `bash pintu-cold-storage-labelling/01_extract_frames.sh`. On Windows use Git Bash / MSYS2 / WSL; do not assume PowerShell can run it natively.
 - Prefer **Python 3** with standard library + `uv`-managed deps for portable steps.
+- For long-running loops (especially per-frame video processing/inference), use **`tqdm`** progress bars instead of ad-hoc periodic `print` counters so terminal progress is clear and consistent.
 
 ## `main.py`
 
