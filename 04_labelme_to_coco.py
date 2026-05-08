@@ -178,7 +178,7 @@ def build_coco_for_split(
 
     coco = {
         "info": {
-            "description": "LabelMe to COCO (converted by labelme_to_coco.py)",
+            "description": "LabelMe to COCO (converted by 04_labelme_to_coco.py)",
             "version": "1.0",
         },
         "licenses": [],
